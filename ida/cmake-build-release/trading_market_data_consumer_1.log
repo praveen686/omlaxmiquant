@@ -1,2 +1,0 @@
-/home/praveen/omlaxmiquant/ida/common/socket_utils.h:98 createSocket() 02:07:42.747168511 cfg:SocketCfg[ip:233.252.14.3 iface:lo port:20001 is_udp:1 is_listening:1 needs_SO_timestamp:0]
-/home/praveen/omlaxmiquant/ida/trading/market_data/market_data_consumer.cpp:28 run() 02:07:42.747365070
