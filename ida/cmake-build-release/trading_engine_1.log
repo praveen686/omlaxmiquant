@@ -1,0 +1,9 @@
+/home/praveen/omlaxmiquant/ida/trading/strategy/trade_engine.cpp:37 TradeEngine() 02:07:38.552838939 Initialized MAKER Ticker:0 TradeEngineCfg{clip:100 thresh:0.6 risk:RiskCfg{max-order-size:150 max-position:300 max-loss:-100}}.
+/home/praveen/omlaxmiquant/ida/trading/strategy/trade_engine.cpp:37 TradeEngine() 02:07:38.552863258 Initialized MAKER Ticker:1 TradeEngineCfg{clip:60 thresh:0.6 risk:RiskCfg{max-order-size:150 max-position:300 max-loss:-100}}.
+/home/praveen/omlaxmiquant/ida/trading/strategy/trade_engine.cpp:37 TradeEngine() 02:07:38.552871946 Initialized MAKER Ticker:2 TradeEngineCfg{clip:150 thresh:0.5 risk:RiskCfg{max-order-size:250 max-position:600 max-loss:-100}}.
+/home/praveen/omlaxmiquant/ida/trading/strategy/trade_engine.cpp:37 TradeEngine() 02:07:38.552879618 Initialized MAKER Ticker:3 TradeEngineCfg{clip:200 thresh:0.4 risk:RiskCfg{max-order-size:500 max-position:3000 max-loss:-100}}.
+/home/praveen/omlaxmiquant/ida/trading/strategy/trade_engine.cpp:37 TradeEngine() 02:07:38.552887119 Initialized MAKER Ticker:4 TradeEngineCfg{clip:1000 thresh:0.9 risk:RiskCfg{max-order-size:5000 max-position:4000 max-loss:-100}}.
+/home/praveen/omlaxmiquant/ida/trading/strategy/trade_engine.cpp:37 TradeEngine() 02:07:38.552894486 Initialized MAKER Ticker:5 TradeEngineCfg{clip:300 thresh:0.8 risk:RiskCfg{max-order-size:1500 max-position:3000 max-loss:-100}}.
+/home/praveen/omlaxmiquant/ida/trading/strategy/trade_engine.cpp:37 TradeEngine() 02:07:38.552901806 Initialized MAKER Ticker:6 TradeEngineCfg{clip:50 thresh:0.7 risk:RiskCfg{max-order-size:150 max-position:300 max-loss:-100}}.
+/home/praveen/omlaxmiquant/ida/trading/strategy/trade_engine.cpp:37 TradeEngine() 02:07:38.552909298 Initialized MAKER Ticker:7 TradeEngineCfg{clip:100 thresh:0.3 risk:RiskCfg{max-order-size:250 max-position:300 max-loss:-100}}.
+/home/praveen/omlaxmiquant/ida/trading/strategy/trade_engine.cpp:75 run() 02:07:38.553022833
