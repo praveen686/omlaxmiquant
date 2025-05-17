@@ -47,7 +47,7 @@ namespace Trading {
 
     OrderGateway &operator=(const OrderGateway &&) = delete;
 
-  private:
+  protected:
     const ClientId client_id_;
 
     /// Exchange's order server's TCP server address.

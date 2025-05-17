@@ -1,9 +1,11 @@
+cmake_minimum_required(VERSION 3.10)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_COMPILER g++)
 set(CMAKE_CXX_FLAGS "-std=c++2a -Wall -Wextra -Werror -Wpedantic")
 set(CMAKE_VERBOSE_MAKEFILE on)
 
-# Find required packages for Binance integration
+# Find required packages for Binance tests
 find_package(Boost 1.70.0 REQUIRED COMPONENTS system thread)
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json 3.9.0 QUIET)
@@ -15,18 +17,11 @@ if(NOT nlohmann_json_FOUND)
   FetchContent_MakeAvailable(json)
 endif()
 
-file(GLOB SOURCES "*/*.cpp")
-
+# Include the main project directories
 include_directories(${PROJECT_SOURCE_DIR})
 include_directories(${PROJECT_SOURCE_DIR}/trading)
 include_directories(${Boost_INCLUDE_DIRS})
 include_directories(${OPENSSL_INCLUDE_DIR})
 
-add_library(libtrading STATIC ${SOURCES} strategy/risk_manager.cpp)
-
-target_link_libraries(libtrading
-  ${Boost_LIBRARIES}
-  ${OPENSSL_LIBRARIES}
-  nlohmann_json::nlohmann_json
-  pthread
-)
+# Add the binance tests directory
+add_subdirectory(binance)

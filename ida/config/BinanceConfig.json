@@ -1,0 +1,60 @@
+{
+  "binance": {
+    "use_testnet": true,
+    "tickers": [
+      {
+        "ticker_id": 1,
+        "symbol": "BTCUSDT",
+        "base_asset": "BTC",
+        "quote_asset": "USDT",
+        "min_qty": 0.00001,
+        "max_qty": 9.0,
+        "step_size": 0.00001,
+        "min_notional": 5.0,
+        "price_precision": 2,
+        "qty_precision": 5,
+        "test_price": 103000.0,
+        "test_qty": 0.001
+      },
+      {
+        "ticker_id": 2,
+        "symbol": "ETHUSDT",
+        "base_asset": "ETH",
+        "quote_asset": "USDT",
+        "min_qty": 0.0001,
+        "max_qty": 9.0,
+        "step_size": 0.0001,
+        "min_notional": 5.0,
+        "price_precision": 2,
+        "qty_precision": 4,
+        "test_price": 3200.0,
+        "test_qty": 0.01
+      },
+      {
+        "ticker_id": 3,
+        "symbol": "BNBUSDT",
+        "base_asset": "BNB",
+        "quote_asset": "USDT",
+        "min_qty": 0.001,
+        "max_qty": 900.0,
+        "step_size": 0.001,
+        "min_notional": 5.0,
+        "price_precision": 2,
+        "qty_precision": 3,
+        "test_price": 500.0,
+        "test_qty": 0.01
+      }
+    ],
+    "order_gateway": {
+      "client_id": 1,
+      "default_test_order_id": 1001,
+      "default_test_side": "BUY",
+      "test_price_multiplier": 0.995,
+      "test_qty": 0.001
+    },
+    "cache_settings": {
+      "symbol_info_cache_minutes": 60,
+      "account_info_cache_minutes": 5
+    }
+  }
+}
