@@ -316,6 +316,20 @@ void BinanceUserDataStream::onConnectionStateChange(bool connected) {
     if (connected) {
         logger_.log("%:% %() % Connected to user data stream WebSocket\n", 
                   __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
+                  
+        // Reset reconnection attempts on successful connection
+        reconnect_attempts_ = 0;
+        
+        // Schedule a keep-alive right away to ensure listen key is valid
+        // This is useful especially after reconnection
+        if (running_) {
+            std::thread([this]() {
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                if (running_) {
+                    keepAliveListenKey();
+                }
+            }).detach();
+        }
     } else {
         logger_.log("%:% %() % Disconnected from user data stream WebSocket\n", 
                   __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
@@ -323,44 +337,80 @@ void BinanceUserDataStream::onConnectionStateChange(bool connected) {
         // Only attempt to reconnect if we're supposed to be running
         if (running_) {
             reconnect_attempts_++;
+            
+            // Use exponential backoff for reconnection attempts
+            int backoff_seconds = std::min(30, static_cast<int>(std::pow(2, reconnect_attempts_ - 1)));
+            
             if (reconnect_attempts_ > max_reconnect_attempts_) {
                 logger_.log("%:% %() % Max reconnection attempts reached, stopping user data stream\n", 
                           __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
                 running_ = false;
+                
+                // Notify client application about critical connection failure
+                if (user_data_callback_) {
+                    nlohmann::json failure_notification = {
+                        {"event", "connection_failure"},
+                        {"error", "Max reconnection attempts reached"},
+                        {"reconnect_attempts", reconnect_attempts_},
+                        {"max_attempts", max_reconnect_attempts_}
+                    };
+                    try {
+                        user_data_callback_(failure_notification.dump());
+                    } catch (const std::exception& e) {
+                        logger_.log("%:% %() % Exception in failure notification callback: %\n", 
+                                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), e.what());
+                    }
+                }
                 return;
             }
             
-            logger_.log("%:% %() % Attempting to reconnect to user data stream (attempt %/%)\n", 
+            logger_.log("%:% %() % Attempting to reconnect to user data stream (attempt %/%) after backoff of %s\n", 
                       __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
-                      reconnect_attempts_, max_reconnect_attempts_);
+                      reconnect_attempts_, max_reconnect_attempts_, backoff_seconds);
             
-            // Get a new listen key
-            std::string new_key = createListenKey();
-            if (new_key.empty()) {
-                logger_.log("%:% %() % Failed to create new listen key for reconnection\n", 
-                          __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
-                return;
-            }
-            
-            {
-                std::lock_guard<std::mutex> lock(listen_key_mutex_);
-                listen_key_ = new_key;
-            }
-            
-            // Connect to the WebSocket with the new listen key
-            std::string host = config_.getWsBaseUrl();
-            std::string port = "443"; // Default HTTPS port
-            std::string target = "/ws/" + listen_key_;
-            
-            // Connect to the WebSocket with our callbacks
-            if (!ws_client_->connect(
-                    host, port, target,
-                    std::bind(&BinanceUserDataStream::onMessage, this, std::placeholders::_1),
-                    std::bind(&BinanceUserDataStream::onConnectionStateChange, this, std::placeholders::_1))) {
-                logger_.log("%:% %() % Failed to reconnect to user data stream WebSocket\n", 
-                          __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
-                return;
-            }
+            // Use a detached thread for reconnection with backoff
+            std::thread([this, backoff_seconds]() {
+                std::this_thread::sleep_for(std::chrono::seconds(backoff_seconds));
+                
+                // Check if we're still supposed to be running after the backoff
+                if (!running_) {
+                    return;
+                }
+                
+                // Get a new listen key
+                std::string new_key = createListenKey();
+                if (new_key.empty()) {
+                    logger_.log("%:% %() % Failed to create new listen key for reconnection\n", 
+                              __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
+                    
+                    // Trigger another connection state change to retry
+                    onConnectionStateChange(false);
+                    return;
+                }
+                
+                {
+                    std::lock_guard<std::mutex> lock(listen_key_mutex_);
+                    listen_key_ = new_key;
+                }
+                
+                // Connect to the WebSocket with the new listen key
+                std::string host = config_.getWsBaseUrl();
+                std::string port = "443"; // Default HTTPS port
+                std::string target = "/ws/" + listen_key_;
+                
+                // Connect to the WebSocket with our callbacks
+                if (!ws_client_->connect(
+                        host, port, target,
+                        std::bind(&BinanceUserDataStream::onMessage, this, std::placeholders::_1),
+                        std::bind(&BinanceUserDataStream::onConnectionStateChange, this, std::placeholders::_1))) {
+                    logger_.log("%:% %() % Failed to reconnect to user data stream WebSocket\n", 
+                              __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
+                    
+                    // Trigger another connection state change to retry
+                    onConnectionStateChange(false);
+                    return;
+                }
+            }).detach();
         }
     }
 }

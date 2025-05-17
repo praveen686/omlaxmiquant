@@ -188,6 +188,61 @@ public:
      */
     int getAccountInfoCacheMinutes() const { return account_info_cache_minutes_; }
     
+    /**
+     * @brief Get the quote asset (base currency for portfolio valuation)
+     * @return The quote asset string (e.g., "USDT")
+     */
+    std::string getQuoteAsset() const { 
+        // Look through symbols to find the most common quote asset
+        if (!tickers_.empty()) {
+            return tickers_[0].quote_asset; 
+        }
+        return "USDT"; // Default
+    }
+    
+    /**
+     * @brief Check if an asset is actively used in our trading
+     * @param asset The asset symbol to check
+     * @return True if the asset is used in any trading pair
+     */
+    bool isActiveAsset(const std::string& asset) const {
+        for (const auto& ticker : tickers_) {
+            if (ticker.base_asset == asset || ticker.quote_asset == asset) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * @brief Get minimum balance threshold for warnings
+     * @param asset The asset to get threshold for
+     * @return The minimum balance threshold
+     */
+    double getMinBalanceThreshold(const std::string& asset) const {
+        // Default minimum thresholds by asset
+        const static std::unordered_map<std::string, double> DEFAULT_MIN_BALANCES = {
+            {"BTC", 0.001},
+            {"ETH", 0.01},
+            {"USDT", 10.0},
+            {"BNB", 0.1}
+        };
+        
+        // Check for default threshold
+        auto it = DEFAULT_MIN_BALANCES.find(asset);
+        if (it != DEFAULT_MIN_BALANCES.end()) {
+            return it->second;
+        }
+        
+        // Default fallback - if it's a quote asset, use higher threshold
+        if (getQuoteAsset() == asset) {
+            return 10.0;
+        }
+        
+        // For other assets, use a small value
+        return 0.0001;
+    }
+    
 private:
     /**
      * @brief Create a default ticker info with all fields initialized

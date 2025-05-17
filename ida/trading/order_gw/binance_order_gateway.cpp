@@ -1137,14 +1137,52 @@ void BinanceOrderGateway::processOrderUpdate(const nlohmann::json& order_update)
         std::string symbol = order_update["s"].get<std::string>();
         std::string side_str = order_update["S"].get<std::string>();
         std::string order_status = order_update["X"].get<std::string>();
-        double price = std::stod(order_update["p"].get<std::string>());
-        double orig_qty = std::stod(order_update["q"].get<std::string>());
-        double executed_qty = std::stod(order_update["z"].get<std::string>());
+        std::string exec_type = order_update["x"].get<std::string>();
+        std::string order_type = order_update["o"].get<std::string>();
+        std::string time_in_force = order_update["f"].get<std::string>();
+        std::string reject_reason = order_update.contains("r") ? order_update["r"].get<std::string>() : "";
+        
+        // Parse price and quantity values
+        double price = 0.0;
+        double orig_qty = 0.0;
+        double executed_qty = 0.0;
+        double last_exec_qty = 0.0;
+        double last_exec_price = 0.0;
+        
+        // Safe parsing with error handling
+        try {
+            price = std::stod(order_update["p"].get<std::string>());
+            orig_qty = std::stod(order_update["q"].get<std::string>());
+            executed_qty = std::stod(order_update["z"].get<std::string>());
+            
+            // Parse last executed quantity and price if available
+            if (order_update.contains("l") && !order_update["l"].get<std::string>().empty()) {
+                last_exec_qty = std::stod(order_update["l"].get<std::string>());
+            }
+            
+            if (order_update.contains("L") && !order_update["L"].get<std::string>().empty()) {
+                last_exec_price = std::stod(order_update["L"].get<std::string>());
+            }
+        } catch (const std::exception& e) {
+            logger_.log("%:% %() % Error parsing order update numeric values: %\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), e.what());
+        }
+        
         double leaves_qty = orig_qty - executed_qty;
         
-        logger_.log("%:% %() % Received order update: status=%, symbol=%, side=%, price=%, exec_qty=%, leaves_qty=%\n", 
+        // Enhanced logging with more details
+        logger_.log("%:% %() % Received order update: client_id=%, binance_id=%, status=%, exec_type=%, symbol=%, side=%, type=%, tif=%, price=%, orig_qty=%, exec_qty=%, leaves_qty=%, last_exec_qty=%, last_exec_price=%\n", 
                   __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
-                  order_status, symbol, side_str, price, executed_qty, leaves_qty);
+                  client_order_id, binance_order_id, order_status, exec_type, symbol, side_str, 
+                  order_type, time_in_force, price, orig_qty, executed_qty, leaves_qty, 
+                  last_exec_qty, last_exec_price);
+                  
+        // Log rejection reason if present
+        if (!reject_reason.empty()) {
+            logger_.log("%:% %() % Order rejected with reason: %\n", 
+                      __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                      reject_reason);
+        }
         
         // Determine the ticker ID from the symbol
         TickerId ticker_id = config_.getTickerIdForSymbol(symbol);
@@ -1183,16 +1221,55 @@ void BinanceOrderGateway::processOrderUpdate(const nlohmann::json& order_update)
         Qty internal_exec_qty = static_cast<Qty>(executed_qty * Common::QtyMultiplier);
         Qty internal_leaves_qty = static_cast<Qty>(leaves_qty * Common::QtyMultiplier);
         
-        // Determine the client response type based on the order status
+        // Determine the client response type based on the order status and execution type
         Exchange::ClientResponseType response_type = Exchange::ClientResponseType::ACCEPTED;
         
-        if (order_status == "NEW" || order_status == "PARTIALLY_FILLED") {
+        // First, handle special execution types
+        if (exec_type == "NEW") {
             response_type = Exchange::ClientResponseType::ACCEPTED;
-        } else if (order_status == "FILLED") {
-            response_type = Exchange::ClientResponseType::FILLED;
-        } else if (order_status == "CANCELED" || order_status == "EXPIRED" || order_status == "REJECTED") {
+        } else if (exec_type == "TRADE" || exec_type == "FILL") {
+            // For a trade execution, we need to check if it's a partial or full fill
+            if (order_status == "FILLED") {
+                response_type = Exchange::ClientResponseType::FILLED;
+            } else if (order_status == "PARTIALLY_FILLED") {
+                // Generate a FILL response for the executed portion
+                if (last_exec_qty > 0) {
+                    Qty last_exec_qty_internal = static_cast<Qty>(last_exec_qty * Common::QtyMultiplier);
+                    Price last_exec_price_internal = static_cast<Price>(last_exec_price * Common::PriceMultiplier);
+                    
+                    // If we have a partial fill, generate a separate fill response for just the executed portion
+                    if (order_id > 0 && last_exec_qty_internal > 0) {
+                        generateAndEnqueueResponse(order_id, Exchange::ClientResponseType::FILL, ticker_id, side, 
+                                                last_exec_price_internal, last_exec_qty_internal, internal_leaves_qty);
+                    }
+                }
+                
+                // For partial fills, maintain the ACCEPTED status to indicate the order is still active
+                response_type = Exchange::ClientResponseType::ACCEPTED;
+            }
+        } else if (exec_type == "CANCELED") {
             response_type = Exchange::ClientResponseType::CANCELED;
+        } else if (exec_type == "REJECTED" || exec_type == "EXPIRED") {
+            response_type = Exchange::ClientResponseType::REJECTED;
+        } else {
+            // Handle order status if exec_type doesn't provide enough information
+            if (order_status == "NEW") {
+                response_type = Exchange::ClientResponseType::ACCEPTED;
+            } else if (order_status == "FILLED") {
+                response_type = Exchange::ClientResponseType::FILLED;
+            } else if (order_status == "PARTIALLY_FILLED") {
+                response_type = Exchange::ClientResponseType::ACCEPTED;
+            } else if (order_status == "CANCELED" || order_status == "EXPIRED") {
+                response_type = Exchange::ClientResponseType::CANCELED;
+            } else if (order_status == "REJECTED") {
+                response_type = Exchange::ClientResponseType::REJECTED;
+            }
         }
+        
+        // Log the determined response type
+        logger_.log("%:% %() % Mapped Binance status % and exec_type % to client response type %\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                  order_status, exec_type, Exchange::clientResponseTypeToString(response_type));
         
         // Generate and enqueue a response
         if (order_id > 0) {
@@ -1207,21 +1284,90 @@ void BinanceOrderGateway::processOrderUpdate(const nlohmann::json& order_update)
 
 void BinanceOrderGateway::processAccountUpdate(const nlohmann::json& account_update) {
     try {
-        // Log the account update
-        logger_.log("%:% %() % Received account update: %\n", 
-                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
-                  account_update.dump());
+        // Extract event time and update time if available
+        Nanos event_time = 0;
+        Nanos update_time = 0;
         
-        // Process balance information if needed
+        if (account_update.contains("E")) {
+            event_time = account_update["E"].get<uint64_t>() * 1000 * 1000; // Convert ms to ns
+        }
+        
+        if (account_update.contains("u")) {
+            update_time = account_update["u"].get<uint64_t>() * 1000 * 1000; // Convert ms to ns
+        }
+        
+        // Enhanced logging with timestamp information
+        logger_.log("%:% %() % Received account update: event_time=%, update_time=%\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                  event_time, update_time);
+        
+        // Process balance information
         if (account_update.contains("B") && account_update["B"].is_array()) {
+            // Lock account balances for updating
+            std::lock_guard<std::mutex> lock(account_balances_mutex_);
+            
             for (const auto& balance : account_update["B"]) {
-                std::string asset = balance["a"].get<std::string>();
-                double free_amount = std::stod(balance["f"].get<std::string>());
-                double locked_amount = std::stod(balance["l"].get<std::string>());
-                
-                logger_.log("%:% %() % Updated balance for %: free=%, locked=%\n", 
+                try {
+                    std::string asset = balance["a"].get<std::string>();
+                    double free_amount = std::stod(balance["f"].get<std::string>());
+                    double locked_amount = std::stod(balance["l"].get<std::string>());
+                    double total_amount = free_amount + locked_amount;
+                    
+                    // Update our account balances cache
+                    account_balances_[asset] = {
+                        free_amount,
+                        locked_amount,
+                        total_amount,
+                        Common::getCurrentNanos()
+                    };
+                    
+                    // Check if this is a meaningful change that should be logged
+                    logger_.log("%:% %() % Updated balance for %: free=%, locked=%, total=%\n", 
+                              __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                              asset, free_amount, locked_amount, total_amount);
+                    
+                    // If this is an asset that's relevant to our configured trading pairs, check balance thresholds
+                    if (config_.isActiveAsset(asset)) {
+                        double min_balance_threshold = config_.getMinBalanceThreshold(asset);
+                        
+                        if (free_amount < min_balance_threshold) {
+                            logger_.log("%:% %() % WARNING: Low balance for %: % (below threshold of %)\n", 
+                                      __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                                      asset, free_amount, min_balance_threshold);
+                                      
+                            // TODO: Could implement automatic deposit notifications or trading limits here
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    logger_.log("%:% %() % Error processing balance for asset %: %\n", 
+                              __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                              balance.dump(), e.what());
+                }
+            }
+            
+            // Calculate portfolio value (if we have price information)
+            double total_portfolio_value = 0.0;
+            double total_base_balance = 0.0;
+            
+            for (const auto& [asset, balance_info] : account_balances_) {
+                if (asset == config_.getQuoteAsset()) {
+                    total_portfolio_value += balance_info.total;
+                    total_base_balance = balance_info.total;
+                } else {
+                    // Try to estimate value using latest price information
+                    double asset_price = getLatestMarketPrice(asset + config_.getQuoteAsset());
+                    if (asset_price > 0) {
+                        double asset_value = balance_info.total * asset_price;
+                        total_portfolio_value += asset_value;
+                    }
+                }
+            }
+            
+            // Log portfolio value only if we have meaningful data
+            if (total_portfolio_value > 0) {
+                logger_.log("%:% %() % Portfolio value estimate: % %\n", 
                           __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
-                          asset, free_amount, locked_amount);
+                          total_portfolio_value, config_.getQuoteAsset());
             }
         }
     } catch (const std::exception& e) {

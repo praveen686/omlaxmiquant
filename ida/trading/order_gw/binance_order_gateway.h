@@ -115,6 +115,18 @@ private:
     std::unordered_map<OrderId, std::string> order_id_to_binance_id_;
     std::mutex order_map_mutex_;
     
+    // Structure to hold balance information
+    struct BalanceInfo {
+        double free;       // Available balance
+        double locked;     // Balance in orders
+        double total;      // Total balance (free + locked)
+        Nanos last_update; // Timestamp of last update
+    };
+    
+    // Cache of account balances
+    std::unordered_map<std::string, BalanceInfo> account_balances_;
+    std::mutex account_balances_mutex_;
+    
     // Main processing function
     void processLoop();
     
