@@ -19,6 +19,7 @@
 #include "market_data/binance_authenticator.h"
 #include "market_data/binance_http_client.h"
 #include "market_data/binance_config.h"
+#include "market_data/binance_user_data_stream.h"
 #include "exchange/market_data/market_update.h"
 
 // Import Common namespace types for convenience
@@ -99,6 +100,9 @@ private:
     // HTTP client for API calls
     BinanceHttpClient http_client_;
     
+    // User data stream for order updates
+    std::unique_ptr<BinanceUserDataStream> user_data_stream_;
+    
     // Thread control
     std::atomic<bool> run_{false};
     std::thread processing_thread_;
@@ -133,6 +137,13 @@ private:
     // Account balance methods
     double getAccountBalance(const std::string& asset);
     double calculateOrderQuantity(const std::string& symbol, double price, Side side);
+    
+    // User data stream methods
+    void startUserDataStream();
+    void stopUserDataStream();
+    void handleUserDataMessage(const std::string& message);
+    void processOrderUpdate(const nlohmann::json& order_update);
+    void processAccountUpdate(const nlohmann::json& account_update);
     
     // Symbol information cache
     std::unordered_map<std::string, nlohmann::json> symbol_info_cache_;

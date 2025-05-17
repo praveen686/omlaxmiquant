@@ -42,6 +42,15 @@ std::string BinanceHttpClient::post(const std::string& host,
     return sendRequest(http::verb::post, host, target, query_params, headers, body, timeout_ms);
 }
 
+std::string BinanceHttpClient::put(const std::string& host,
+                                 const std::string& target,
+                                 const std::string& body,
+                                 const std::map<std::string, std::string>& query_params,
+                                 const std::map<std::string, std::string>& headers,
+                                 int timeout_ms) {
+    return sendRequest(http::verb::put, host, target, query_params, headers, body, timeout_ms);
+}
+
 std::string BinanceHttpClient::del(const std::string& host,
                                  const std::string& target,
                                  const std::map<std::string, std::string>& query_params,

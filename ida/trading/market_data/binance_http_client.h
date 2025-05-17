@@ -79,6 +79,24 @@ public:
                     int timeout_ms = 5000);
     
     /**
+     * @brief Perform a PUT request
+     * @param host The host to connect to (e.g., "api.binance.com")
+     * @param target The request target (e.g., "/api/v3/userDataStream")
+     * @param body The request body
+     * @param query_params Map of query parameters
+     * @param headers Additional HTTP headers
+     * @param timeout_ms Request timeout in milliseconds
+     * @return The response body as a string
+     * @throws std::runtime_error if the request fails
+     */
+    std::string put(const std::string& host,
+                   const std::string& target,
+                   const std::string& body,
+                   const std::map<std::string, std::string>& query_params = {},
+                   const std::map<std::string, std::string>& headers = {},
+                   int timeout_ms = 5000);
+
+    /**
      * @brief Perform a DELETE request
      * @param host The host to connect to (e.g., "api.binance.com")
      * @param target The request target (e.g., "/api/v3/order")

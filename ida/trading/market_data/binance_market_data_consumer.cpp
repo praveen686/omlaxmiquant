@@ -1,6 +1,7 @@
 #include "binance_market_data_consumer.h"
 #include "binance_config.h"
 #include "binance_http_client.h"
+#include "binance_types.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -404,11 +405,9 @@ void BinanceMarketDataConsumer::processOrderBookSnapshot(const std::string& symb
 
 Common::Price BinanceMarketDataConsumer::stringPriceToInternal(const std::string& price_str) {
     // Convert string price to internal price representation
-    // For simplicity, multiply by 10000 to convert to ticks
-    // In a real implementation, this would handle decimal places correctly
+    // Use our specialized Binance price conversion function to handle decimal places correctly
     try {
-        double price_dbl = std::stod(price_str);
-        return static_cast<Common::Price>(price_dbl * 10000.0);
+        return Binance::binancePriceStringToInternal(price_str);
     }
     catch (const std::exception& e) {
         logger_.log("%:% %() % Error converting price: %\n", 
@@ -420,11 +419,9 @@ Common::Price BinanceMarketDataConsumer::stringPriceToInternal(const std::string
 
 Common::Qty BinanceMarketDataConsumer::stringQtyToInternal(const std::string& qty_str) {
     // Convert string quantity to internal quantity representation
-    // For simplicity, multiply by 10000 to convert to internal units
-    // In a real implementation, this would handle decimal places correctly
+    // Use our specialized Binance quantity conversion function to handle decimal places correctly
     try {
-        double qty_dbl = std::stod(qty_str);
-        return static_cast<Common::Qty>(qty_dbl * 10000.0);
+        return Binance::binanceQtyStringToInternal(qty_str);
     }
     catch (const std::exception& e) {
         logger_.log("%:% %() % Error converting qty: %\n", 

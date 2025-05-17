@@ -1,4 +1,5 @@
 #include "binance_order_gateway.h"
+#include "market_data/binance_types.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>  // For std::setprecision
@@ -43,6 +44,9 @@ void BinanceOrderGateway::start() {
         return;
     }
     
+    // Start the user data stream
+    startUserDataStream();
+    
     run_ = true;
     processing_thread_ = std::thread(&BinanceOrderGateway::processLoop, this);
     
@@ -57,6 +61,9 @@ void BinanceOrderGateway::stop() {
     }
     
     run_ = false;
+    
+    // Stop the user data stream
+    stopUserDataStream();
     
     if (processing_thread_.joinable()) {
         processing_thread_.join();
@@ -122,15 +129,15 @@ void BinanceOrderGateway::handleNewOrderRequest(const Exchange::MEClientRequest&
         std::string symbol = getSymbolForTickerId(request.ticker_id_);
         
         // Convert internal scaled values to actual decimal values for Binance
-        // Assuming internal scaling is 10000x (e.g., 10000000 = 1000.00)
-        double price_decimal = static_cast<double>(request.price_) / 10000.0;
+        // Convert internal price to Binance decimal format
+        double price_decimal = Binance::internalPriceToBinance(request.price_);
         
         // Get a suitable quantity for the order based on account balance
         // instead of using the quantity from the request
         double qty_decimal = calculateOrderQuantity(symbol, price_decimal, request.side_);
         
         // Original quantity from request (for logging)
-        double original_qty_decimal = static_cast<double>(request.qty_) / 10000.0;
+        double original_qty_decimal = Binance::internalQtyToBinance(request.qty_);
         
         logger_.log("%:% %() % Converting internal values: price=%d -> %f, original qty=%d -> %f, calculated qty=%f\n", 
                   __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
@@ -261,13 +268,17 @@ void BinanceOrderGateway::handleNewOrderRequest(const Exchange::MEClientRequest&
         }
         
         // Prepare the parameters for the order
+        // Use format "x-<order_id>" for client order ID to track our internal order ID
+        std::string client_order_id = "x-" + std::to_string(request.order_id_);
+        
         std::map<std::string, std::string> params = {
             {"symbol", symbol},
             {"side", request.side_ == Side::BUY ? "BUY" : "SELL"},
             {"type", "LIMIT"}, // Default to LIMIT
             {"timeInForce", "GTC"}, // Good Till Cancel
             {"quantity", formatted_qty},
-            {"price", formatted_price}
+            {"price", formatted_price},
+            {"newClientOrderId", client_order_id} // Add our custom client order ID
         };
         
         logger_.log("%:% %() % Order parameters: symbol=%, side=%, quantity=%, price=%\n", 
@@ -546,7 +557,7 @@ double BinanceOrderGateway::getLatestMarketPrice(const std::string& symbol) {
                     (update->type_ == Exchange::MarketUpdateType::ADD || 
                      update->type_ == Exchange::MarketUpdateType::MODIFY)) {
                     
-                    latest_price = static_cast<double>(update->price_) / 10000.0; // Convert from internal format
+                    latest_price = Binance::internalPriceToBinance(update->price_); // Convert from internal format
                     found_price = true;
                 }
                 
@@ -609,7 +620,7 @@ double BinanceOrderGateway::getLatestMarketPrice(const std::string& symbol) {
 
 bool BinanceOrderGateway::validateOrderPrice(const std::string& symbol, Price price, Side side) {
     // Convert internal price format to actual price
-    double order_price = static_cast<double>(price) / 10000.0;
+    double order_price = Binance::internalPriceToBinance(price);
     
     // Get the latest market price
     double market_price = getLatestMarketPrice(symbol);
@@ -1037,6 +1048,185 @@ double BinanceOrderGateway::calculateOrderQuantity(const std::string& symbol, do
                   __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
                   e.what());
         return 0.0;
+    }
+}
+
+void BinanceOrderGateway::startUserDataStream() {
+    try {
+        // Create a shared_ptr to the authenticator for use with the user data stream
+        // We need to use a raw pointer reference because BinanceAuthenticator is not copyable
+        auto authenticator_ptr = std::shared_ptr<BinanceAuthenticator>(&authenticator_, [](BinanceAuthenticator*){
+            // No-op deleter - we don't own the authenticator
+        });
+        
+        // Create the user data stream
+        user_data_stream_ = std::make_unique<BinanceUserDataStream>(
+            logger_,
+            authenticator_ptr,
+            config_,
+            std::bind(&BinanceOrderGateway::handleUserDataMessage, this, std::placeholders::_1)
+        );
+        
+        // Start the stream
+        if (!user_data_stream_->start()) {
+            logger_.log("%:% %() % Failed to start user data stream\n", 
+                      __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
+            return;
+        }
+        
+        logger_.log("%:% %() % User data stream started\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
+    } catch (const std::exception& e) {
+        logger_.log("%:% %() % Exception while starting user data stream: %\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), e.what());
+    }
+}
+
+void BinanceOrderGateway::stopUserDataStream() {
+    try {
+        if (user_data_stream_) {
+            // Stop the stream
+            user_data_stream_->stop();
+            user_data_stream_.reset();
+            
+            logger_.log("%:% %() % User data stream stopped\n", 
+                      __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_));
+        }
+    } catch (const std::exception& e) {
+        logger_.log("%:% %() % Exception while stopping user data stream: %\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), e.what());
+    }
+}
+
+void BinanceOrderGateway::handleUserDataMessage(const std::string& message) {
+    try {
+        // Parse the message
+        nlohmann::json json_message = nlohmann::json::parse(message);
+        
+        // Check if it's an order update or account update
+        if (json_message.contains("e")) {
+            std::string event_type = json_message["e"].get<std::string>();
+            
+            if (event_type == "executionReport") {
+                // Order update
+                processOrderUpdate(json_message);
+            } else if (event_type == "outboundAccountPosition") {
+                // Account update
+                processAccountUpdate(json_message);
+            } else {
+                logger_.log("%:% %() % Received unknown event type: %\n", 
+                          __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                          event_type);
+            }
+        } else {
+            logger_.log("%:% %() % Received message with unknown format: %\n", 
+                      __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                      message);
+        }
+    } catch (const std::exception& e) {
+        logger_.log("%:% %() % Exception while handling user data message: %\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), e.what());
+    }
+}
+
+void BinanceOrderGateway::processOrderUpdate(const nlohmann::json& order_update) {
+    try {
+        // Extract relevant fields from the order update
+        std::string client_order_id = order_update["c"].get<std::string>();
+        std::string binance_order_id = order_update["i"].get<std::string>();
+        std::string symbol = order_update["s"].get<std::string>();
+        std::string side_str = order_update["S"].get<std::string>();
+        std::string order_status = order_update["X"].get<std::string>();
+        double price = std::stod(order_update["p"].get<std::string>());
+        double orig_qty = std::stod(order_update["q"].get<std::string>());
+        double executed_qty = std::stod(order_update["z"].get<std::string>());
+        double leaves_qty = orig_qty - executed_qty;
+        
+        logger_.log("%:% %() % Received order update: status=%, symbol=%, side=%, price=%, exec_qty=%, leaves_qty=%\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                  order_status, symbol, side_str, price, executed_qty, leaves_qty);
+        
+        // Determine the ticker ID from the symbol
+        TickerId ticker_id = config_.getTickerIdForSymbol(symbol);
+        
+        // Determine the side
+        Side side = Side::INVALID;
+        if (side_str == "BUY") {
+            side = Side::BUY;
+        } else if (side_str == "SELL") {
+            side = Side::SELL;
+        }
+        
+        // Extract the original order ID from the client order ID
+        // Client order ID format is usually "x-<internal_order_id>"
+        OrderId order_id = 0;
+        if (client_order_id.find("x-") == 0) {
+            try {
+                order_id = std::stoull(client_order_id.substr(2));
+            } catch (...) {
+                logger_.log("%:% %() % Could not parse original order ID from client order ID: %\n", 
+                          __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                          client_order_id);
+            }
+        }
+        
+        // Store the order ID mapping
+        if (order_id > 0) {
+            std::lock_guard<std::mutex> lock(order_map_mutex_);
+            order_id_to_binance_id_[order_id] = binance_order_id;
+        }
+        
+        // Convert price from double to internal representation
+        Price internal_price = static_cast<Price>(price * Common::PriceMultiplier);
+        
+        // Convert quantities from double to internal representation
+        Qty internal_exec_qty = static_cast<Qty>(executed_qty * Common::QtyMultiplier);
+        Qty internal_leaves_qty = static_cast<Qty>(leaves_qty * Common::QtyMultiplier);
+        
+        // Determine the client response type based on the order status
+        Exchange::ClientResponseType response_type = Exchange::ClientResponseType::ACCEPTED;
+        
+        if (order_status == "NEW" || order_status == "PARTIALLY_FILLED") {
+            response_type = Exchange::ClientResponseType::ACCEPTED;
+        } else if (order_status == "FILLED") {
+            response_type = Exchange::ClientResponseType::FILLED;
+        } else if (order_status == "CANCELED" || order_status == "EXPIRED" || order_status == "REJECTED") {
+            response_type = Exchange::ClientResponseType::CANCELED;
+        }
+        
+        // Generate and enqueue a response
+        if (order_id > 0) {
+            generateAndEnqueueResponse(order_id, response_type, ticker_id, side, 
+                                      internal_price, internal_exec_qty, internal_leaves_qty);
+        }
+    } catch (const std::exception& e) {
+        logger_.log("%:% %() % Exception while processing order update: %\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), e.what());
+    }
+}
+
+void BinanceOrderGateway::processAccountUpdate(const nlohmann::json& account_update) {
+    try {
+        // Log the account update
+        logger_.log("%:% %() % Received account update: %\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                  account_update.dump());
+        
+        // Process balance information if needed
+        if (account_update.contains("B") && account_update["B"].is_array()) {
+            for (const auto& balance : account_update["B"]) {
+                std::string asset = balance["a"].get<std::string>();
+                double free_amount = std::stod(balance["f"].get<std::string>());
+                double locked_amount = std::stod(balance["l"].get<std::string>());
+                
+                logger_.log("%:% %() % Updated balance for %: free=%, locked=%\n", 
+                          __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), 
+                          asset, free_amount, locked_amount);
+            }
+        }
+    } catch (const std::exception& e) {
+        logger_.log("%:% %() % Exception while processing account update: %\n", 
+                  __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str_), e.what());
     }
 }
 

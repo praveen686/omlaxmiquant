@@ -11,6 +11,7 @@
 #include "common/macros.h"
 #include "common/lf_queue.h"
 #include "common/types.h"
+#include "market_data/binance_types.h"
 
 #include "exchange/order_server/client_request.h"
 #include "exchange/order_server/client_response.h"
@@ -281,9 +282,9 @@ int main(int argc, char* argv[]) {
     if (test_price <= 0) test_price = 30000.0;
     if (test_qty <= 0) test_qty = 0.001;
     
-    // Set price and quantity in internal format (scaled by 10000)
-    new_order.price_ = static_cast<Common::Price>(test_price * 10000.0);
-    new_order.qty_ = static_cast<Common::Qty>(test_qty * 10000.0);
+    // Set price and quantity in internal format using Binance conversion helpers
+    new_order.price_ = Trading::Binance::binancePriceToInternal(test_price);
+    new_order.qty_ = Trading::Binance::binanceQtyToInternal(test_qty);
     
     // Populate the market data queue with current market prices
     // This will help the price validation in the order gateway
@@ -323,7 +324,7 @@ int main(int argc, char* argv[]) {
             Exchange::MEMarketUpdate update;
             update.type_ = Exchange::MarketUpdateType::ADD;
             update.ticker_id_ = test_ticker_id;
-            update.price_ = static_cast<Common::Price>(current_price * 10000.0);  // Convert to internal format
+            update.price_ = Trading::Binance::binancePriceToInternal(current_price);  // Convert to internal format
             update.side_ = Common::Side::BUY;
             
             auto next_write = market_data_updates.getNextToWriteTo();
@@ -337,7 +338,7 @@ int main(int argc, char* argv[]) {
             // Update the test order's price to be close to market price
             // Use a price that's slightly below market price to ensure it passes validation
             double test_price = current_price * config.getTestPriceMultiplier();
-            new_order.price_ = static_cast<Common::Price>(test_price * 10000.0);
+            new_order.price_ = Trading::Binance::binancePriceToInternal(test_price);
             
             logger.log("%:% %() % Using test price for order: % (% * multiplier %)\n", 
                       __FILE__, __LINE__, __FUNCTION__, Common::getCurrentTimeStr(&time_str),
